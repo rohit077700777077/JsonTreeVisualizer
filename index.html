@@ -1,0 +1,617 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>JSON Tree</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: input panel on the left, a scrollable and zoomable canvas on the right.
+   The tree is drawn top-down as green boxes joined by arrows, like a hand-drawn org chart. */
+:root {
+  --bg: #eaf1ec;
+  --panel: #f7faf8;
+  --ink: #14231b;
+  --muted: #5a6d62;
+  --line: #cbd9cf;
+  --dot: #c5d5ca;
+  --node: #0b8a43;
+  --node-edge: #08702f;
+  --node-ink: #ffffff;
+  --node-soft: rgba(255, 255, 255, 0.78);
+  --node-text: #0b7a3b;
+  --edge: #2f6b48;
+  --danger: #b3261e;
+  --focus: #1a6dff;
+  --font-ui: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1511;
+    --panel: #141d18;
+    --ink: #e3eee7;
+    --muted: #93a99b;
+    --line: #26362d;
+    --dot: #22322a;
+    --node: #0f7d41;
+    --node-edge: #19a25a;
+    --node-text: #6fdc9d;
+    --edge: #5fae82;
+    --danger: #ff8a80;
+    --focus: #7aa7ff;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1511;
+  --panel: #141d18;
+  --ink: #e3eee7;
+  --muted: #93a99b;
+  --line: #26362d;
+  --dot: #22322a;
+  --node: #0f7d41;
+  --node-edge: #19a25a;
+  --node-text: #6fdc9d;
+  --edge: #5fae82;
+  --danger: #ff8a80;
+  --focus: #7aa7ff;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  padding-block: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.45;
+  display: flex;
+  flex-direction: column;
+}
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 12px;
+}
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand svg { flex: none; }
+.brand b { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+.brand span { color: var(--muted); font-size: 13px; }
+
+main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 12px;
+  padding-bottom: 12px;
+}
+main.no-panel { grid-template-columns: minmax(0, 1fr); }
+main.no-panel .panel { display: none; }
+
+.panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+.drop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1.5px dashed var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.drop:hover, .drop.over, .stage.over { border-color: var(--node); color: var(--ink); }
+.drop strong { color: var(--ink); font-weight: 600; }
+.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.drop:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+label.cap { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+textarea {
+  flex: 1;
+  min-height: 120px;
+  width: 100%;
+  resize: none;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 12px/1.5 var(--font-mono);
+  tab-size: 2;
+}
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn {
+  font: 600 13px var(--font-ui);
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--node); }
+.btn.primary { background: var(--node); border-color: var(--node-edge); color: #fff; }
+.btn.primary:hover { filter: brightness(1.1); }
+#status { font-size: 13px; min-height: 1.45em; color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+#status.ok { color: var(--node-text); }
+#status.bad { color: var(--danger); }
+.tips { margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 12.5px; display: grid; gap: 2px; }
+.tips kbd { font: 500 11px var(--font-mono); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--bg); color: var(--ink); }
+
+.stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+#scroller {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  display: flex;
+  touch-action: none;
+  cursor: grab;
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: 18px 18px;
+  background-attachment: local;
+  overscroll-behavior: contain;
+}
+#scroller.grabbing { cursor: grabbing; user-select: none; }
+#tree { flex: none; margin: auto; display: block; user-select: none; -webkit-user-select: none; }
+
+.nb { fill: var(--node); stroke: var(--node-edge); stroke-width: 1; }
+.nk { fill: var(--node-ink); font: 600 13px var(--font-ui); }
+.nm { fill: var(--node-soft); font: 500 11px var(--font-mono); }
+.nv { fill: var(--node-soft); font: 400 12px var(--font-mono); }
+.edge { stroke: var(--edge); stroke-width: 1.5; fill: none; }
+.arrow { fill: var(--edge); }
+.node.kids { cursor: pointer; }
+.node.kids:hover .nb { filter: brightness(1.12); }
+.node.more .nb { fill: var(--panel); stroke: var(--muted); stroke-dasharray: 4 3; }
+.node.more .nm { fill: var(--muted); }
+.tog { opacity: 0; }
+.node:hover .tog, .node.closed .tog { opacity: 1; }
+.tog rect { fill: var(--panel); stroke: var(--node); stroke-width: 1.5; }
+.tog text { fill: var(--node-text); font: 600 11px var(--font-mono); }
+
+.controls {
+  position: absolute;
+  left: 12px;
+  bottom: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+}
+.controls .group { display: flex; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; }
+.controls button {
+  font: 600 13px var(--font-ui);
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  min-width: 34px;
+  height: 32px;
+  padding: 0 10px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.controls button + button { border-left: 1px solid var(--line); }
+.controls button:hover { background: var(--bg); }
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+@media (max-width: 760px) {
+  .brand span { display: none; }
+  main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .panel { max-height: 44vh; overflow: auto; }
+  textarea { flex: none; height: 110px; }
+  .tips { display: none; }
+}
+</style>
+
+<header>
+  <div class="brand">
+    <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+      <g fill="none" stroke="var(--edge)" stroke-width="1.5"><path d="M14 8v5M14 13H5v4M14 13h9v4"/></g>
+      <rect x="9" y="2" width="10" height="6" rx="1.5" fill="var(--node)"/>
+      <rect x="1" y="17" width="8" height="6" rx="1.5" fill="var(--node)"/>
+      <rect x="19" y="17" width="8" height="6" rx="1.5" fill="var(--node)"/>
+    </svg>
+    <b>JSON Tree</b>
+    <span>Paste or upload JSON, read it as a tree.</span>
+  </div>
+  <button class="btn" id="togglePanel" type="button" aria-pressed="false">Hide input</button>
+</header>
+
+<main id="main">
+  <section class="panel" aria-label="JSON input">
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept=".json,.txt,application/json,text/plain">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 14V4M6 8l4-4 4 4M3 15v2h14v-2"/></svg>
+      <span><strong>Upload a .json file</strong><br>or drop it anywhere here</span>
+    </label>
+    <label class="cap" for="src">Or paste JSON</label>
+    <textarea id="src" spellcheck="false" autocomplete="off" placeholder='{"name": "value"}'></textarea>
+    <div class="row">
+      <button class="btn primary" id="draw" type="button">Draw tree</button>
+      <button class="btn" id="sample" type="button">Sample</button>
+      <button class="btn" id="format" type="button">Format</button>
+      <button class="btn" id="clear" type="button">Clear</button>
+    </div>
+    <div id="status" role="status" aria-live="polite"></div>
+    <ul class="tips">
+      <li>Scroll or drag to move around the tree.</li>
+      <li><kbd>Ctrl</kbd> + scroll, pinch, or <kbd>+</kbd> <kbd>-</kbd> to zoom. <kbd>0</kbd> fits the screen.</li>
+      <li>Click a box to fold or unfold what is under it.</li>
+    </ul>
+  </section>
+
+  <section class="stage" id="stage" aria-label="Tree view">
+    <div id="scroller" tabindex="0">
+      <svg id="tree" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="JSON tree diagram"></svg>
+    </div>
+    <div class="empty" id="empty" hidden>Paste or upload JSON to draw its tree.</div>
+    <div class="controls">
+      <div class="group">
+        <button type="button" id="zout" aria-label="Zoom out">&minus;</button>
+        <button type="button" id="zpct" aria-label="Reset zoom to 100%">100%</button>
+        <button type="button" id="zin" aria-label="Zoom in">+</button>
+      </div>
+      <div class="group">
+        <button type="button" id="fit">Fit</button>
+      </div>
+      <div class="group">
+        <button type="button" id="expand">Expand all</button>
+        <button type="button" id="collapse">Collapse all</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var ta = $('src'), scroller = $('scroller'), svg = $('tree'), statusEl = $('status');
+  var MAXC = 200, MAXN = 20000, PAD = 48, GAPX = 18, GAPY = 70, MINZ = 0.1, MAXZ = 3;
+  var F_KEY = '600 13px "Instrument Sans", system-ui, sans-serif';
+  var F_META = '500 11px "JetBrains Mono", ui-monospace, monospace';
+  var F_VAL = '400 12px "JetBrains Mono", ui-monospace, monospace';
+  var cv = document.createElement('canvas').getContext('2d');
+  var nodes = [], root = null, W = 100, H = 100, zoom = 1;
+
+  var SAMPLE = {
+    School_Name: 'Greenfield High',
+    Class: 10,
+    Info: { President: 'A. Verma', Address: '12 Station Road, Lucknow' },
+    Students: [
+      { Grade: { Math: 'A', Chemistry: 'B+', Physics: 'A-' }, Name: 'Riya Sharma', Id: 101 },
+      { Grade: { Math: 'B', Chemistry: 'A', Physics: 'B+' }, Name: 'Karan Mehta', Id: 102 }
+    ]
+  };
+
+  function tw(t, f) { cv.font = f; return Math.ceil(cv.measureText(t).width) + 2; }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function short(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+  /* ---------- build ---------- */
+  function pathOf(parent, key) {
+    if (key.charAt(0) === '[') return parent + key;
+    return /^[A-Za-z_$][\w$]*$/.test(key) ? parent + '.' + key : parent + '["' + key + '"]';
+  }
+  function build(val, key, depth, path) {
+    var n = { id: nodes.length, key: key, depth: depth, path: path, children: [], collapsed: false, type: '', size: 0, disp: '', full: '' };
+    nodes.push(n);
+    var i, lim;
+    if (val === null) { n.type = 'null'; n.disp = n.full = 'null'; }
+    else if (Array.isArray(val)) {
+      n.type = 'array'; n.size = val.length; n.disp = n.full = '[]';
+      lim = nodes.length > MAXN ? 0 : Math.min(val.length, MAXC);
+      for (i = 0; i < lim; i++) n.children.push(build(val[i], '[' + i + ']', depth + 1, path + '[' + i + ']'));
+      if (val.length > lim) n.children.push(moreNode(val.length - lim, depth + 1));
+    } else if (typeof val === 'object') {
+      var keys = Object.keys(val);
+      n.type = 'object'; n.size = keys.length; n.disp = n.full = '{}';
+      lim = nodes.length > MAXN ? 0 : Math.min(keys.length, MAXC);
+      for (i = 0; i < lim; i++) n.children.push(build(val[keys[i]], keys[i], depth + 1, pathOf(path, keys[i])));
+      if (keys.length > lim) n.children.push(moreNode(keys.length - lim, depth + 1));
+    } else {
+      n.type = typeof val;
+      n.full = n.type === 'string' ? JSON.stringify(val) : String(val);
+      n.disp = short(n.full, 26);
+    }
+    return n;
+  }
+  function moreNode(count, depth) {
+    var n = { id: nodes.length, key: '+' + count + ' more', depth: depth, path: '', children: [], collapsed: false, type: 'more', size: 0, disp: '', full: '' };
+    nodes.push(n);
+    return n;
+  }
+
+  /* ---------- layout ---------- */
+  function measure(n) {
+    if (n.type === 'more') { n.w = Math.max(72, tw(n.key, F_META) + 24); n.h = 30; return; }
+    if (n.children.length) {
+      n.meta = n.type === 'array' ? '[' + n.size + ']' : '{' + n.size + '}';
+      n.w = Math.max(72, tw(n.key, F_KEY) + 10 + tw(n.meta, F_META) + 28);
+      n.h = 40;
+    } else {
+      n.w = Math.max(72, Math.max(tw(n.key, F_KEY), tw(n.disp, F_VAL)) + 28);
+      n.h = 54;
+    }
+  }
+  function kids(n) { return n.collapsed ? [] : n.children; }
+  function span(n) {
+    var k = kids(n), total = 0, i;
+    for (i = 0; i < k.length; i++) total += span(k[i]) + (i ? GAPX : 0);
+    n.kw = total;
+    n.sw = Math.max(n.w, total);
+    return n.sw;
+  }
+  var rowH, rowY;
+  function place(n, left) {
+    n.x = left + n.sw / 2;
+    rowH[n.depth] = Math.max(rowH[n.depth] || 0, n.h);
+    var k = kids(n), cur = left + (n.sw - n.kw) / 2, i;
+    for (i = 0; i < k.length; i++) { place(k[i], cur); cur += k[i].sw + GAPX; }
+  }
+  function assignY(n) {
+    n.y = rowY[n.depth];
+    var k = kids(n), i;
+    for (i = 0; i < k.length; i++) assignY(k[i]);
+  }
+
+  /* ---------- render ---------- */
+  function render() {
+    if (!root) { svg.innerHTML = ''; $('empty').hidden = false; W = H = 100; applySize(); return; }
+    $('empty').hidden = true;
+    span(root);
+    rowH = []; rowY = [];
+    place(root, PAD);
+    var d, y = PAD;
+    for (d = 0; d < rowH.length; d++) { rowY[d] = y; y += rowH[d] + GAPY; }
+    assignY(root);
+    W = root.sw + PAD * 2;
+    H = y - GAPY + PAD;
+
+    var edges = '', boxes = '';
+    (function walk(n) {
+      var k = kids(n), i, c;
+      for (i = 0; i < k.length; i++) {
+        c = k[i];
+        edges += '<line class="edge" x1="' + n.x + '" y1="' + (n.y + n.h) + '" x2="' + c.x + '" y2="' + (c.y - 1) + '" marker-end="url(#ah)"/>';
+        walk(c);
+      }
+      boxes += nodeSvg(n);
+    })(root);
+
+    svg.innerHTML = '<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path class="arrow" d="M0 0L10 5L0 10z"/></marker></defs>' + edges + boxes;
+    applySize();
+  }
+  function nodeSvg(n) {
+    var x = n.x - n.w / 2, cx = n.x, hasKids = n.children.length > 0;
+    var cls = 'node' + (hasKids ? ' kids' : '') + (n.collapsed ? ' closed' : '') + (n.type === 'more' ? ' more' : '');
+    var tip = n.type === 'more' ? n.key : n.path + (hasKids ? '' : ' = ' + short(n.full, 200));
+    var s = '<g class="' + cls + '" data-id="' + n.id + '"><title>' + esc(tip) + '</title>';
+    s += '<rect class="nb" x="' + x + '" y="' + n.y + '" width="' + n.w + '" height="' + n.h + '" rx="6"/>';
+    if (n.type === 'more') {
+      s += '<text class="nm" x="' + cx + '" y="' + (n.y + 19) + '" text-anchor="middle">' + esc(n.key) + '</text>';
+    } else if (hasKids) {
+      s += '<text x="' + cx + '" y="' + (n.y + 24.5) + '" text-anchor="middle"><tspan class="nk">' + esc(n.key) + '</tspan><tspan class="nm" dx="10">' + esc(n.meta) + '</tspan></text>';
+      var label = n.collapsed ? '+' + n.children.length : '−';
+      var pw = Math.max(22, label.length * 7 + 12);
+      s += '<g class="tog"><rect x="' + (cx - pw / 2) + '" y="' + (n.y + n.h - 9) + '" width="' + pw + '" height="18" rx="9"/><text x="' + cx + '" y="' + (n.y + n.h + 4) + '" text-anchor="middle">' + label + '</text></g>';
+    } else {
+      s += '<text class="nk" x="' + cx + '" y="' + (n.y + 22) + '" text-anchor="middle">' + esc(n.key) + '</text>';
+      s += '<text class="nv" x="' + cx + '" y="' + (n.y + 40) + '" text-anchor="middle">' + esc(n.disp) + '</text>';
+    }
+    return s + '</g>';
+  }
+
+  /* ---------- zoom and view ---------- */
+  function applySize() {
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.style.width = (W * zoom) + 'px';
+    svg.style.height = (H * zoom) + 'px';
+    $('zpct').textContent = Math.round(zoom * 100) + '%';
+  }
+  function setZoom(z, cx, cy) {
+    z = clamp(z, MINZ, MAXZ);
+    if (z === zoom) return;
+    var r = svg.getBoundingClientRect(), sr = scroller.getBoundingClientRect();
+    if (cx == null) { cx = sr.left + sr.width / 2; cy = sr.top + sr.height / 2; }
+    var px = (cx - r.left) / zoom, py = (cy - r.top) / zoom;
+    zoom = z;
+    applySize();
+    var r2 = svg.getBoundingClientRect();
+    scroller.scrollLeft += (r2.left + px * zoom) - cx;
+    scroller.scrollTop += (r2.top + py * zoom) - cy;
+  }
+  function fit() {
+    var cw = scroller.clientWidth - 24, ch = scroller.clientHeight - 24;
+    var z = Math.min(cw / W, ch / H, 1.25);
+    zoom = clamp(Math.max(z, 0.45), MINZ, MAXZ);
+    applySize();
+    scroller.scrollTop = 0;
+    scroller.scrollLeft = Math.max(0, (scroller.scrollWidth - scroller.clientWidth) / 2);
+  }
+
+  /* ---------- load JSON ---------- */
+  function setStatus(msg, cls) { statusEl.textContent = msg; statusEl.className = cls || ''; }
+  function load(text, keepView) {
+    if (!text.trim()) { root = null; nodes = []; render(); setStatus('Nothing to draw yet.'); return; }
+    var data;
+    try { data = JSON.parse(text); }
+    catch (e) { setStatus('Not valid JSON: ' + e.message, 'bad'); return; }
+    nodes = [];
+    root = build(data, 'JSON', 0, '$');
+    nodes.forEach(measure);
+    var count = nodes.filter(function (n) { return n.type !== 'more'; }).length;
+    var depth = nodes.reduce(function (m, n) { return Math.max(m, n.depth); }, 0);
+    if (count > 500) nodes.forEach(function (n) { if (n.depth >= 3 && n.children.length) n.collapsed = true; });
+    render();
+    if (!keepView) fit();
+    setStatus('Valid JSON · ' + count.toLocaleString() + ' boxes · ' + (depth + 1) + ' levels' + (count > 500 ? ' · deep levels folded, click a box to open' : ''), 'ok');
+  }
+
+  /* ---------- fold ---------- */
+  function toggle(n) {
+    var r = svg.getBoundingClientRect();
+    var sx = r.left + n.x * zoom, sy = r.top + n.y * zoom;
+    n.collapsed = !n.collapsed;
+    render();
+    var r2 = svg.getBoundingClientRect();
+    scroller.scrollLeft += (r2.left + n.x * zoom) - sx;
+    scroller.scrollTop += (r2.top + n.y * zoom) - sy;
+  }
+  scroller.addEventListener('click', function (e) {
+    var g = e.target.closest ? e.target.closest('.node') : null;
+    if (!g) return;
+    var n = nodes[+g.getAttribute('data-id')];
+    if (n && n.children.length) toggle(n);
+  });
+  $('expand').addEventListener('click', function () { nodes.forEach(function (n) { n.collapsed = false; }); render(); fit(); });
+  $('collapse').addEventListener('click', function () { nodes.forEach(function (n) { n.collapsed = n.depth >= 1 && n.children.length > 0; }); render(); fit(); });
+
+  /* ---------- pan, pinch, wheel ---------- */
+  var ptrs = new Map(), drag = null, pinch = null;
+  function mid() {
+    var a = Array.from(ptrs.values());
+    return { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2, d: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1 };
+  }
+  scroller.addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.size === 1) drag = { sx: e.clientX, sy: e.clientY, sl: scroller.scrollLeft, st: scroller.scrollTop, moved: false };
+    else if (ptrs.size === 2) { var m = mid(); pinch = { d: m.d, z: zoom, mx: m.x, my: m.y }; drag = null; }
+  });
+  scroller.addEventListener('pointermove', function (e) {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && ptrs.size >= 2) {
+      var m = mid();
+      setZoom(pinch.z * m.d / pinch.d, m.x, m.y);
+      scroller.scrollLeft -= m.x - pinch.mx;
+      scroller.scrollTop -= m.y - pinch.my;
+      pinch.mx = m.x; pinch.my = m.y;
+    } else if (drag) {
+      var dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+      if (!drag.moved && Math.hypot(dx, dy) > 5) {
+        drag.moved = true;
+        try { scroller.setPointerCapture(e.pointerId); } catch (err) {}
+        scroller.classList.add('grabbing');
+      }
+      if (drag.moved) { scroller.scrollLeft = drag.sl - dx; scroller.scrollTop = drag.st - dy; }
+    }
+  });
+  function endPtr(e) {
+    ptrs.delete(e.pointerId);
+    if (ptrs.size < 2) pinch = null;
+    if (ptrs.size === 1) {
+      var p = Array.from(ptrs.values())[0];
+      drag = { sx: p.x, sy: p.y, sl: scroller.scrollLeft, st: scroller.scrollTop, moved: true };
+    } else if (ptrs.size === 0) { drag = null; scroller.classList.remove('grabbing'); }
+  }
+  scroller.addEventListener('pointerup', endPtr);
+  scroller.addEventListener('pointercancel', endPtr);
+  scroller.addEventListener('wheel', function (e) {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      setZoom(zoom * Math.exp(-clamp(e.deltaY, -60, 60) * 0.004), e.clientX, e.clientY);
+    } else {
+      e.preventDefault();
+      scroller.scrollLeft += e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+      if (!e.shiftKey) scroller.scrollTop += e.deltaY;
+    }
+  }, { passive: false });
+  scroller.addEventListener('keydown', function (e) {
+    var step = 40;
+    if (e.key === '+' || e.key === '=') { setZoom(zoom * 1.2); e.preventDefault(); }
+    else if (e.key === '-' || e.key === '_') { setZoom(zoom / 1.2); e.preventDefault(); }
+    else if (e.key === '0') { fit(); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { scroller.scrollLeft -= step; e.preventDefault(); }
+    else if (e.key === 'ArrowRight') { scroller.scrollLeft += step; e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { scroller.scrollTop -= step; e.preventDefault(); }
+    else if (e.key === 'ArrowDown') { scroller.scrollTop += step; e.preventDefault(); }
+  });
+  $('zin').addEventListener('click', function () { setZoom(zoom * 1.25); });
+  $('zout').addEventListener('click', function () { setZoom(zoom / 1.25); });
+  $('zpct').addEventListener('click', function () { setZoom(1); });
+  $('fit').addEventListener('click', fit);
+
+  /* ---------- input ---------- */
+  var timer;
+  ta.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(function () { load(ta.value); }, 350); });
+  ta.addEventListener('paste', function () { clearTimeout(timer); setTimeout(function () { load(ta.value); }, 0); });
+  $('draw').addEventListener('click', function () { load(ta.value); });
+  $('sample').addEventListener('click', function () { ta.value = JSON.stringify(SAMPLE, null, 2); load(ta.value); });
+  $('clear').addEventListener('click', function () { ta.value = ''; load(''); ta.focus(); });
+  $('format').addEventListener('click', function () {
+    try { ta.value = JSON.stringify(JSON.parse(ta.value), null, 2); setStatus('Formatted.', 'ok'); }
+    catch (e) { setStatus('Not valid JSON: ' + e.message, 'bad'); }
+  });
+  function readFile(f) {
+    if (!f) return;
+    var fr = new FileReader();
+    fr.onload = function () { ta.value = String(fr.result); load(ta.value); };
+    fr.onerror = function () { setStatus('Could not read that file.', 'bad'); };
+    fr.readAsText(f);
+  }
+  $('file').addEventListener('change', function (e) { readFile(e.target.files[0]); e.target.value = ''; });
+  ['stage', 'drop'].forEach(function (id) {
+    var el = $(id);
+    el.addEventListener('dragover', function (e) { e.preventDefault(); el.classList.add('over'); });
+    el.addEventListener('dragleave', function () { el.classList.remove('over'); });
+    el.addEventListener('drop', function (e) {
+      e.preventDefault(); el.classList.remove('over');
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) readFile(f);
+    });
+  });
+  $('togglePanel').addEventListener('click', function () {
+    var main = $('main'), hidden = main.classList.toggle('no-panel');
+    this.textContent = hidden ? 'Show input' : 'Hide input';
+    this.setAttribute('aria-pressed', hidden ? 'true' : 'false');
+  });
+
+  /* ---------- start ---------- */
+  ta.value = JSON.stringify(SAMPLE, null, 2);
+  load(ta.value);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () { if (root) { nodes.forEach(measure); render(); fit(); } });
+  }
+  window.addEventListener('resize', function () { /* keep current zoom */ });
+})();
+</script>
+
+</body></html>
